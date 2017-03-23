@@ -1,8 +1,9 @@
 ﻿CACHE MANIFEST
-#1454579713
+#1490303781
 data.js
 c2runtime.js
 jquery-2.1.1.min.js
+offlineClient.js
 images/rifleman-sheet0.png
 images/enemysoldier-sheet0.png
 images/bullet-sheet0.png
@@ -24,6 +25,8 @@ images/sprintsprite-sheet0.png
 images/burstfiresprite-sheet0.png
 images/grenadesprite-sheet0.png
 images/regensprite-sheet0.png
+images/gameeffectsprite-sheet0.png
+images/grenade-sheet0.png
 icon-16.png
 icon-32.png
 icon-114.png
