@@ -1778,6 +1778,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		this.lastMV = mat4.create();
 		this.currentMV = mat4.create();
 		this.gl = gl;
+		this.version = (this.gl.getParameter(this.gl.VERSION).indexOf("WebGL 2") === 0 ? 2 : 1);
 		this.initState();
 	};
 	GLWrap_.prototype.initState = function ()
@@ -3206,16 +3207,22 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				break;
 			}
 		}
-		if (!isPOT && tiling)
+		if (this.version === 1 && !isPOT && tiling)
 		{
 			var canvas = document.createElement("canvas");
 			canvas.width = cr.nextHighestPowerOfTwo(img.width);
 			canvas.height = cr.nextHighestPowerOfTwo(img.height);
 			var ctx = canvas.getContext("2d");
-			ctx["webkitImageSmoothingEnabled"] = linearsampling;
-			ctx["mozImageSmoothingEnabled"] = linearsampling;
-			ctx["msImageSmoothingEnabled"] = linearsampling;
-			ctx["imageSmoothingEnabled"] = linearsampling;
+			if (typeof ctx["imageSmoothingEnabled"] !== "undefined")
+			{
+				ctx["imageSmoothingEnabled"] = linearsampling;
+			}
+			else
+			{
+				ctx["webkitImageSmoothingEnabled"] = linearsampling;
+				ctx["mozImageSmoothingEnabled"] = linearsampling;
+				ctx["msImageSmoothingEnabled"] = linearsampling;
+			}
 			ctx.drawImage(img,
 						  0, 0, img.width, img.height,
 						  0, 0, canvas.width, canvas.height);
@@ -3249,7 +3256,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		if (linearsampling)
 		{
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-			if (isPOT && this.enable_mipmaps && !nomip)
+			if ((isPOT || this.version >= 2) && this.enable_mipmaps && !nomip)
 			{
 				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
 				gl.generateMipmap(gl.TEXTURE_2D);
@@ -3378,20 +3385,6 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 ;
 (function()
 {
-	function window_innerWidth()
-	{
-		if (typeof jQuery !== "undefined")
-			return jQuery(window).width();
-		else
-			return window.innerWidth;
-	};
-	function window_innerHeight()
-	{
-		if (typeof jQuery !== "undefined")
-			return jQuery(window).height();
-		else
-			return window.innerHeight;
-	};
 	var raf = window["requestAnimationFrame"] ||
 	  window["mozRequestAnimationFrame"]    ||
 	  window["webkitRequestAnimationFrame"] ||
@@ -3465,6 +3458,13 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		{
 			this.isMobile = /(blackberry|bb10|playbook|palm|symbian|nokia|windows\s+ce|phone|mobile|tablet|kindle|silk)/i.test(navigator.userAgent);
 		}
+		this.isWKWebView = !!(this.isiOS && this.isCordova && window["webkit"]);
+		this.httpServer = null;
+		this.httpServerUrl = "";
+		if (this.isWKWebView)
+		{
+			this.httpServer = (cordova && cordova["plugins"] && cordova["plugins"]["CorHttpd"]) ? cordova["plugins"]["CorHttpd"] : null;
+		}
 		if (typeof cr_is_preview !== "undefined" && !this.isNWjs && (window.location.search === "?nw" || /nodewebkit/i.test(navigator.userAgent) || /nwjs/i.test(navigator.userAgent)))
 		{
 			this.isNWjs = true;
@@ -3505,7 +3505,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		this.cssHeight = this.height;
 		this.lastWindowWidth = window.innerWidth;
 		this.lastWindowHeight = window.innerHeight;
-		this.forceCanvasAlpha = false;		// allow plugins to force the canvas to display with alpha channel
+		this.forceCanvasAlpha = false;		// note: now unused, left for backwards compat since plugins could modify it
 		this.redraw = true;
 		this.isSuspended = false;
 		if (!Date.now) {
@@ -3538,7 +3538,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		this.isLoadingState = false;
 		this.saveToSlot = "";
 		this.loadFromSlot = "";
-		this.loadFromJson = "";
+		this.loadFromJson = null;			// set to string when there is something to try to load
 		this.lastSaveJson = "";
 		this.signalledContinuousPreview = false;
 		this.suspendDrawing = false;		// for hiding display until continuous preview loads
@@ -3616,6 +3616,40 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 	Runtime.prototype.requestProjectData = function ()
 	{
 		var self = this;
+		if (this.isWKWebView)
+		{
+			if (this.httpServer)
+			{
+				this.httpServer["startServer"]({
+					"port": 0,
+					"localhost_only": true
+				}, function (url)
+				{
+					self.httpServerUrl = url;
+					self.fetchLocalFileViaCordovaAsText("data.js", function (str)
+					{
+						self.loadProject(JSON.parse(str));
+					}, function (err)
+					{
+						alert("Error fetching data.js");
+					});
+				}, function (err)
+				{
+					alert("error starting local server: " + err);
+				});
+			}
+			else
+			{
+				this.fetchLocalFileViaCordovaAsText("data.js", function (str)
+				{
+					self.loadProject(JSON.parse(str));
+				}, function (err)
+				{
+					alert("Error fetching data.js");
+				});
+			}
+			return;
+		}
 		var xhr;
 		if (this.isWindowsPhone8)
 			xhr = new ActiveXObject("Microsoft.XMLHTTP");
@@ -3699,25 +3733,27 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		this.devicePixelRatio = (this.isRetina ? (window["devicePixelRatio"] || window["webkitDevicePixelRatio"] || window["mozDevicePixelRatio"] || window["msDevicePixelRatio"] || 1) : 1);
 		this.ClearDeathRow();
 		var attribs;
-		var alpha_canvas = !!(this.forceCanvasAlpha || (this.alphaBackground && !(this.isNWjs || this.isWinJS || this.isWindowsPhone8 || this.isCrosswalk || this.isCordova || this.isAmazonWebApp)));
 		if (this.fullscreen_mode > 0)
-			this["setSize"](window_innerWidth(), window_innerHeight(), true);
+			this["setSize"](window.innerWidth, window.innerHeight, true);
 		try {
 			if (this.enableWebGL && (this.isCocoonJs || this.isEjecta || !this.isDomFree))
 			{
 				attribs = {
-					"alpha": alpha_canvas,
+					"alpha": true,
 					"depth": false,
 					"antialias": false,
 					"failIfMajorPerformanceCaveat": true
 				};
-				this.gl = (this.canvas.getContext("webgl", attribs) || this.canvas.getContext("experimental-webgl", attribs));
+				this.gl = (this.canvas.getContext("webgl2", attribs) ||
+						   this.canvas.getContext("webgl", attribs) ||
+						   this.canvas.getContext("experimental-webgl", attribs));
 			}
 		}
 		catch (e) {
 		}
 		if (this.gl)
 		{
+			var isWebGL2 = (this.gl.getParameter(this.gl.VERSION).indexOf("WebGL 2") === 0);
 			var debug_ext = this.gl.getExtension("WEBGL_debug_renderer_info");
 			if (debug_ext)
 			{
@@ -3826,21 +3862,18 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				{
 					attribs = {
 						"antialias": !!this.linearSampling,
-						"alpha": alpha_canvas
+						"alpha": true
 					};
 					this.ctx = this.canvas.getContext("2d", attribs);
 				}
 				else
 				{
 					attribs = {
-						"alpha": alpha_canvas
+						"alpha": true
 					};
 					this.ctx = this.canvas.getContext("2d", attribs);
 				}
-				this.ctx["webkitImageSmoothingEnabled"] = this.linearSampling;
-				this.ctx["mozImageSmoothingEnabled"] = this.linearSampling;
-				this.ctx["msImageSmoothingEnabled"] = this.linearSampling;
-				this.ctx["imageSmoothingEnabled"] = this.linearSampling;
+				this.setCtxImageSmoothingEnabled(this.ctx, this.linearSampling);
 			}
 			this.overlay_canvas = null;
 			this.overlay_ctx = null;
@@ -3873,7 +3906,9 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				});
 				jQuery(window).blur(function ()
 				{
-					self["setSuspended"](true);
+					var parent = window.parent;
+					if (!parent || !parent.document.hasFocus())
+						self["setSuspended"](true);
 				});
 			}
 		}
@@ -3891,7 +3926,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 					catch (e) {}
 				}
 			}
-			if (window.navigator["pointerEnabled"])
+			if (typeof PointerEvent !== "undefined")
 			{
 				document.addEventListener("pointerdown", unfocusFormControlFunc);
 			}
@@ -3920,9 +3955,6 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 	{
 		var offx = 0, offy = 0;
 		var neww = 0, newh = 0, intscale = 0;
-		var tryHideAddressBar = (this.isiPhoneiOS6 && this.isSafari && !navigator["standalone"] && !this.isDomFree && !this.isCordova);
-		if (tryHideAddressBar)
-			h += 60;		// height of Safari iPhone iOS 6 address bar
 		if (this.lastWindowWidth === w && this.lastWindowHeight === h && !force)
 			return;
 		this.lastWindowWidth = w;
@@ -4000,13 +4032,6 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		}
 		if (mode < 2)
 			this.aspect_scale = dpr;
-		if (this.isRetina && this.isiPad && dpr > 1)	// don't apply to iPad 1-2
-		{
-			if (w >= 1024)
-				w = 1023;		// 2046 retina pixels
-			if (h >= 1024)
-				h = 1023;
-		}
 		this.cssWidth = Math.round(w);
 		this.cssHeight = Math.round(h);
 		this.width = Math.round(w * dpr);
@@ -4104,17 +4129,12 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		}
 		if (this.ctx)
 		{
-			this.ctx["webkitImageSmoothingEnabled"] = this.linearSampling;
-			this.ctx["mozImageSmoothingEnabled"] = this.linearSampling;
-			this.ctx["msImageSmoothingEnabled"] = this.linearSampling;
-			this.ctx["imageSmoothingEnabled"] = this.linearSampling;
+			this.setCtxImageSmoothingEnabled(this.ctx, this.linearSampling);
 		}
 		this.tryLockOrientation();
-		if (!this.isDomFree && (tryHideAddressBar || this.isiPhone))
+		if (this.isiPhone && !this.isCordova)
 		{
-			window.setTimeout(function () {
-				window.scrollTo(0, 1);
-			}, 100);
+			window.scrollTo(0, 0);
 		}
 	};
 	Runtime.prototype.tryLockOrientation = function ()
@@ -4126,7 +4146,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			orientation = "landscape";
 		try {
 			if (screen["orientation"] && screen["orientation"]["lock"])
-				screen["orientation"]["lock"](orientation);
+				screen["orientation"]["lock"](orientation).catch(function(){});
 			else if (screen["lockOrientation"])
 				screen["lockOrientation"](orientation);
 			else if (screen["webkitLockOrientation"])
@@ -4182,6 +4202,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 	Runtime.prototype["setSuspended"] = function (s)
 	{
 		var i, len;
+		var self = this;
 		if (s && !this.isSuspended)
 		{
 			cr.logexport("[Construct 2] Suspending");
@@ -4241,7 +4262,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		{
 			var loaderImage = new Image();
 			loaderImage.crossOrigin = "anonymous";
-			loaderImage.src = "loading-logo.png";
+			this.setImageSrc(loaderImage, "loading-logo.png");
 			this.loaderlogos = {
 				logo: loaderImage
 			};
@@ -4292,6 +4313,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			plugin = new p(this);
 			plugin.singleglobal = m[1];
 			plugin.is_world = m[2];
+			plugin.is_rotatable = m[5];
 			plugin.must_predraw = m[9];
 			if (plugin.onCreate)
 				plugin.onCreate();  // opportunity to override default ACEs
@@ -4547,7 +4569,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		this.aspect_scale = 1.0;
 		this.enableWebGL = pm[13];
 		this.linearSampling = pm[14];
-		this.alphaBackground = pm[15];
+		this.clearBackground = pm[15];
 		this.versionstr = pm[16];
 		this.useHighDpi = pm[17];
 		this.orientations = pm[20];		// 0 = any, 1 = portrait, 2 = landscape
@@ -4596,7 +4618,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			else
 			{
 				img_.crossOrigin = "anonymous";			// required for Arcade sandbox compatibility
-				img_.src = src_;
+				this.setImageSrc(img_, src_);			// work around WKWebView problems
 			}
 		}
 		this.wait_for_textures.push(img_);
@@ -4664,6 +4686,12 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		var ctx = this.ctx || this.overlay_ctx;
 		if (this.overlay_canvas)
 			this.positionOverlayCanvas();
+		var curwidth = window.innerWidth;
+		var curheight = window.innerHeight;
+		if (this.lastWindowWidth !== curwidth || this.lastWindowHeight !== curheight)
+		{
+			this["setSize"](curwidth, curheight);
+		}
 		this.progress = 0;
 		this.last_progress = -1;
 		var self = this;
@@ -4921,6 +4949,8 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		{
 			this.loadingprogress = 1;
 			this.trigger(cr.system_object.prototype.cnds.OnLoadFinished, null);
+			if (window["C2_RegisterSW"])		// note not all platforms use SW
+				window["C2_RegisterSW"]();
 		}
 		if (navigator["splashscreen"] && navigator["splashscreen"]["hide"])
 			navigator["splashscreen"]["hide"]();
@@ -4963,13 +4993,13 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		var isfullscreen = (document["mozFullScreen"] || document["webkitIsFullScreen"] || document["fullScreen"] || !!document["msFullscreenElement"]) && !this.isCordova;
 		if ((isfullscreen || this.isNodeFullscreen) && this.fullscreen_scaling > 0)
 			fsmode = this.fullscreen_scaling;
-		if (fsmode > 0 && (!this.isiOS || window.self !== window.top))
+		if (fsmode > 0)	// r222: experimentally enabling this workaround for all platforms
 		{
 			var curwidth = window.innerWidth;
 			var curheight = window.innerHeight;
 			if (this.lastWindowWidth !== curwidth || this.lastWindowHeight !== curheight)
 			{
-				this["setSize"](window_innerWidth(), window_innerHeight());
+				this["setSize"](curwidth, curheight);
 			}
 		}
 		if (!this.isDomFree)
@@ -5020,6 +5050,8 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				this.isloading = false;
 				this.progress = 1;
 				this.trigger(cr.system_object.prototype.cnds.OnLoadFinished, null);
+				if (window["C2_RegisterSW"])
+					window["C2_RegisterSW"]();
 			}
 		}
 		this.logic(raf_time);
@@ -5063,12 +5095,14 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			this.cpuutilisation = this.logictime;
 			this.logictime = 0;
 		}
+		var wallDt = 0;
 		if (this.last_tick_time !== 0)
 		{
 			var ms_diff = cur_time - this.last_tick_time;
 			if (ms_diff < 0)
 				ms_diff = 0;
-			this.dt1 = ms_diff / 1000.0; // dt measured in seconds
+			wallDt = ms_diff / 1000.0; // dt measured in seconds
+			this.dt1 = wallDt;
 			if (this.dt1 > 0.5)
 				this.dt1 = 0;
 			else if (this.dt1 > 1 / this.minimumFramerate)
@@ -5077,7 +5111,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		this.last_tick_time = cur_time;
         this.dt = this.dt1 * this.timescale;
         this.kahanTime.add(this.dt);
-		this.wallTime.add(this.dt1);
+		this.wallTime.add(wallDt);		// prevent min/max framerate affecting wall clock
 		var isfullscreen = (document["mozFullScreen"] || document["webkitIsFullScreen"] || document["fullScreen"] || !!document["msFullscreenElement"] || this.isNodeFullscreen) && !this.isCordova;
 		if (this.fullscreen_mode >= 2 /* scale */ || (isfullscreen && this.fullscreen_scaling > 0))
 		{
@@ -5224,7 +5258,30 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		if (prev_layout == changeToLayout)
 			cr.clearArray(this.system.waits);
 		cr.clearArray(this.registered_collisions);
+		this.runLayoutChangeMethods(true);
 		changeToLayout.startRunning();
+		this.runLayoutChangeMethods(false);
+		this.redraw = true;
+		this.layout_first_tick = true;
+		this.ClearDeathRow();
+	};
+	Runtime.prototype.runLayoutChangeMethods = function (isBeforeChange)
+	{
+		var i, len, beh, type, j, lenj, inst, k, lenk, binst;
+		for (i = 0, len = this.behaviors.length; i < len; i++)
+		{
+			beh = this.behaviors[i];
+			if (isBeforeChange)
+			{
+				if (beh.onBeforeLayoutChange)
+					beh.onBeforeLayoutChange();
+			}
+			else
+			{
+				if (beh.onLayoutChange)
+					beh.onLayoutChange();
+			}
+		}
 		for (i = 0, len = this.types_by_index.length; i < len; i++)
 		{
 			type = this.types_by_index[i];
@@ -5233,22 +5290,35 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			for (j = 0, lenj = type.instances.length; j < lenj; j++)
 			{
 				inst = type.instances[j];
-				if (inst.onLayoutChange)
-					inst.onLayoutChange();
+				if (isBeforeChange)
+				{
+					if (inst.onBeforeLayoutChange)
+						inst.onBeforeLayoutChange();
+				}
+				else
+				{
+					if (inst.onLayoutChange)
+						inst.onLayoutChange();
+				}
 				if (inst.behavior_insts)
 				{
 					for (k = 0, lenk = inst.behavior_insts.length; k < lenk; k++)
 					{
 						binst = inst.behavior_insts[k];
-						if (binst.onLayoutChange)
-							binst.onLayoutChange();
+						if (isBeforeChange)
+						{
+							if (binst.onBeforeLayoutChange)
+								binst.onBeforeLayoutChange();
+						}
+						else
+						{
+							if (binst.onLayoutChange)
+								binst.onLayoutChange();
+						}
 					}
 				}
 			}
 		}
-		this.redraw = true;
-		this.layout_first_tick = true;
-		this.ClearDeathRow();
 	};
 	Runtime.prototype.pretickMe = function (inst)
     {
@@ -5888,7 +5958,8 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 	{
 		var sol = type.getCurrentSol();
 		var i, j, inst, len;
-		var lx, ly;
+		var orblock = this.getCurrentEventStack().current_event.orblock;
+		var lx, ly, arr;
 		if (sol.select_all)
 		{
 			if (!inverted)
@@ -5909,14 +5980,17 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 					else
 						sol.instances.push(inst);
 				}
+				else if (orblock)
+					sol.else_instances.push(inst);
 			}
 		}
 		else
 		{
 			j = 0;
-			for (i = 0, len = sol.instances.length; i < len; i++)
+			arr = (orblock ? sol.else_instances : sol.instances);
+			for (i = 0, len = arr.length; i < len; i++)
 			{
-				inst = sol.instances[i];
+				inst = arr[i];
 				inst.update_bbox();
 				lx = inst.layer.canvasToLayer(ptx, pty, true);
 				ly = inst.layer.canvasToLayer(ptx, pty, false);
@@ -5924,6 +5998,8 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				{
 					if (inverted)
 						return false;
+					else if (orblock)
+						sol.instances.push(inst);
 					else
 					{
 						sol.instances[j] = sol.instances[i];
@@ -5932,7 +6008,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				}
 			}
 			if (!inverted)
-				sol.instances.length = j;
+				arr.length = j;
 		}
 		type.applySolToContainer();
 		if (inverted)
@@ -6703,6 +6779,16 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		var evinfo = this.getCurrentEventStack();
 		return evinfo.current_event.conditions[evinfo.cndindex];
 	};
+	Runtime.prototype.getCurrentConditionObjectType = function ()
+	{
+		var cnd = this.getCurrentCondition();
+		return cnd.type;
+	};
+	Runtime.prototype.isCurrentConditionFirst = function ()
+	{
+		var evinfo = this.getCurrentEventStack();
+		return evinfo.cndindex === 0;
+	};
 	Runtime.prototype.getCurrentAction = function ()
 	{
 		var evinfo = this.getCurrentEventStack();
@@ -6946,6 +7032,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 					catch (f)
 					{
 						cr.logexport("Failed to save game state: " + e + "; " + f);
+						self.trigger(cr.system_object.prototype.cnds.OnSaveFailed, null);
 					}
 				});
 			}
@@ -6963,11 +7050,12 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				catch (e)
 				{
 					cr.logexport("Error saving to WebStorage: " + e);
+					self.trigger(cr.system_object.prototype.cnds.OnSaveFailed, null);
 				}
 			}
 			this.saveToSlot = "";
 			this.loadFromSlot = "";
-			this.loadFromJson = "";
+			this.loadFromJson = null;
 		}
 		if (loadingFromSlot.length)
 		{
@@ -6986,15 +7074,21 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 						cr.logexport("Loaded state from WebStorage (" + self.loadFromJson.length + " bytes)");
 					}
 					self.suspendDrawing = false;
-					if (!self.loadFromJson.length)
+					if (!self.loadFromJson)
+					{
+						self.loadFromJson = null;
 						self.trigger(cr.system_object.prototype.cnds.OnLoadFailed, null);
+					}
 				}, function (e)
 				{
 					self.loadFromJson = localStorage.getItem("__c2save_" + loadingFromSlot) || "";
 					cr.logexport("Loaded state from WebStorage (" + self.loadFromJson.length + " bytes)");
 					self.suspendDrawing = false;
-					if (!self.loadFromJson.length)
+					if (!self.loadFromJson)
+					{
+						self.loadFromJson = null;
 						self.trigger(cr.system_object.prototype.cnds.OnLoadFailed, null);
+					}
 				});
 			}
 			else
@@ -7005,23 +7099,33 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 				}
 				catch (e)
 				{
-					this.loadFromJson = "";
+					this.loadFromJson = null;
 				}
 				this.suspendDrawing = false;
-				if (!self.loadFromJson.length)
+				if (!self.loadFromJson)
+				{
+					self.loadFromJson = null;
 					self.trigger(cr.system_object.prototype.cnds.OnLoadFailed, null);
+				}
 			}
 			this.loadFromSlot = "";
 			this.saveToSlot = "";
 		}
-		if (this.loadFromJson.length)
+		if (this.loadFromJson !== null)
 		{
 			this.ClearDeathRow();
-			this.loadFromJSONString(this.loadFromJson);
-			this.lastSaveJson = this.loadFromJson;
-			this.trigger(cr.system_object.prototype.cnds.OnLoadComplete, null);
-			this.lastSaveJson = "";
-			this.loadFromJson = "";
+			var ok = this.loadFromJSONString(this.loadFromJson);
+			if (ok)
+			{
+				this.lastSaveJson = this.loadFromJson;
+				this.trigger(cr.system_object.prototype.cnds.OnLoadComplete, null);
+				this.lastSaveJson = "";
+			}
+			else
+			{
+				self.trigger(cr.system_object.prototype.cnds.OnLoadFailed, null);
+			}
+			this.loadFromJson = null;
 		}
 	};
 	function CopyExtraObject(extra)
@@ -7145,11 +7249,17 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 	};
 	Runtime.prototype.loadFromJSONString = function (str)
 	{
-		var o = JSON.parse(str);
+		var o;
+		try {
+			o = JSON.parse(str);
+		}
+		catch (e) {
+			return false;
+		}
 		if (!o["c2save"])
-			return;		// probably not a c2 save state
+			return false;		// probably not a c2 save state
 		if (o["version"] > 1)
-			return;		// from future version of c2; assume not compatible
+			return false;		// from future version of c2; assume not compatible
 		this.isLoadingState = true;
 		var rt = o["rt"];
 		this.kahanTime.reset();
@@ -7310,6 +7420,7 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 			}
 		}
 		this.redraw = true;
+		return true;
 	};
 	Runtime.prototype.saveInstanceToJSON = function(inst, state_only)
 	{
@@ -7503,6 +7614,115 @@ quat4.str=function(a){return"["+a[0]+", "+a[1]+", "+a[2]+", "+a[3]+"]"};
 		if (o["data"])
 			inst.loadFromJSON(o["data"]);
 	};
+	Runtime.prototype.fetchLocalFileViaCordova = function (filename, successCallback, errorCallback)
+	{
+		var path = cordova["file"]["applicationDirectory"] + "www/" + filename;
+		window["resolveLocalFileSystemURL"](path, function (entry)
+		{
+			entry.file(successCallback, errorCallback);
+		}, errorCallback);
+	};
+	Runtime.prototype.fetchLocalFileViaCordovaAsText = function (filename, successCallback, errorCallback)
+	{
+		this.fetchLocalFileViaCordova(filename, function (file)
+		{
+			var reader = new FileReader();
+			reader.onload = function (e)
+			{
+				successCallback(e.target.result);
+			};
+			reader.onerror = errorCallback;
+			reader.readAsText(file);
+		}, errorCallback);
+	};
+	var queuedArrayBufferReads = [];
+	var activeArrayBufferReads = 0;
+	var MAX_ARRAYBUFFER_READS = 8;
+	Runtime.prototype.maybeStartNextArrayBufferRead = function()
+	{
+		if (!queuedArrayBufferReads.length)
+			return;		// none left
+		if (activeArrayBufferReads >= MAX_ARRAYBUFFER_READS)
+			return;		// already got maximum number in-flight
+		activeArrayBufferReads++;
+		var job = queuedArrayBufferReads.shift();
+		this.doFetchLocalFileViaCordovaAsArrayBuffer(job.filename, job.successCallback, job.errorCallback);
+	};
+	Runtime.prototype.fetchLocalFileViaCordovaAsArrayBuffer = function (filename, successCallback_, errorCallback_)
+	{
+		var self = this;
+		queuedArrayBufferReads.push({
+			filename: filename,
+			successCallback: function (result)
+			{
+				activeArrayBufferReads--;
+				self.maybeStartNextArrayBufferRead();
+				successCallback_(result);
+			},
+			errorCallback: function (err)
+			{
+				activeArrayBufferReads--;
+				self.maybeStartNextArrayBufferRead();
+				errorCallback_(err);
+			}
+		});
+		this.maybeStartNextArrayBufferRead();
+	};
+	Runtime.prototype.doFetchLocalFileViaCordovaAsArrayBuffer = function (filename, successCallback, errorCallback)
+	{
+		this.fetchLocalFileViaCordova(filename, function (file)
+		{
+			var reader = new FileReader();
+			reader.onload = function (e)
+			{
+				successCallback(e.target.result);
+			};
+			reader.readAsArrayBuffer(file);
+		}, errorCallback);
+	};
+	Runtime.prototype.fetchLocalFileViaCordovaAsURL = function (filename, successCallback, errorCallback)
+	{
+		this.fetchLocalFileViaCordovaAsArrayBuffer(filename, function (arrayBuffer)
+		{
+			var blob = new Blob([arrayBuffer]);
+			var url = URL.createObjectURL(blob);
+			successCallback(url);
+		}, errorCallback);
+	};
+	Runtime.prototype.isAbsoluteUrl = function (url)
+	{
+		return /^(?:[a-z]+:)?\/\//.test(url) || url.substr(0, 5) === "data:"  || url.substr(0, 5) === "blob:";
+	};
+	Runtime.prototype.setImageSrc = function (img, src)
+	{
+		if (this.isWKWebView && !this.isAbsoluteUrl(src))
+		{
+			this.fetchLocalFileViaCordovaAsURL(src, function (url)
+			{
+				img.src = url;
+			}, function (err)
+			{
+				alert("Failed to load image: " + err);
+			});
+		}
+		else
+		{
+			img.src = src;
+		}
+	};
+	Runtime.prototype.setCtxImageSmoothingEnabled = function (ctx, e)
+	{
+		if (typeof ctx["imageSmoothingEnabled"] !== "undefined")
+		{
+			ctx["imageSmoothingEnabled"] = e;
+		}
+		else
+		{
+			ctx["webkitImageSmoothingEnabled"] = e;
+			ctx["mozImageSmoothingEnabled"] = e;
+			ctx["msImageSmoothingEnabled"] = e;
+		}
+	};
 	cr.runtime = Runtime;
 	cr.createRuntime = function (canvasid)
 	{
@@ -7580,6 +7800,8 @@ window["cr_setSuspended"] = function(s)
 		this.angle = 0;
 		this.first_visit = true;
 		this.name = m[0];
+		this.originalWidth = m[1];
+		this.originalHeight = m[2];
 		this.width = m[1];
 		this.height = m[2];
 		this.unbounded_scrolling = m[3];
@@ -7685,6 +7907,8 @@ window["cr_setSuspended"] = function(s)
 			this.event_sheet.updateDeepIncludes();
 		}
 		this.runtime.running_layout = this;
+		this.width = this.originalWidth;
+		this.height = this.originalHeight;
 		this.scrollX = (this.runtime.original_width / 2);
 		this.scrollY = (this.runtime.original_height / 2);
 		var i, k, len, lenk, type, type_instances, inst, iid, t, s, p, q, type_data, layer;
@@ -7959,15 +8183,12 @@ window["cr_setSuspended"] = function(s)
 			}
 			if (ctx_changed)
 			{
-				layout_ctx["webkitImageSmoothingEnabled"] = this.runtime.linearSampling;
-				layout_ctx["mozImageSmoothingEnabled"] = this.runtime.linearSampling;
-				layout_ctx["msImageSmoothingEnabled"] = this.runtime.linearSampling;
-				layout_ctx["imageSmoothingEnabled"] = this.runtime.linearSampling;
+				this.runtime.setCtxImageSmoothingEnabled(layout_ctx, this.runtime.linearSampling);
 			}
 		}
 		layout_ctx.globalAlpha = 1;
 		layout_ctx.globalCompositeOperation = "source-over";
-		if (this.runtime.alphaBackground && !this.hasOpaqueBottomLayer())
+		if (this.runtime.clearBackground && !this.hasOpaqueBottomLayer())
 			layout_ctx.clearRect(0, 0, this.runtime.draw_width, this.runtime.draw_height);
 		var i, len, l;
 		for (i = 0, len = this.layers.length; i < len; i++)
@@ -8048,7 +8269,7 @@ window["cr_setSuspended"] = function(s)
 				this.runtime.layout_tex = null;
 			}
 		}
-		if (this.runtime.alphaBackground && !this.hasOpaqueBottomLayer())
+		if (this.runtime.clearBackground && !this.hasOpaqueBottomLayer())
 			glw.clear(0, 0, 0, 0);
 		var i, len, l;
 		for (i = 0, len = this.layers.length; i < len; i++)
@@ -8345,9 +8566,22 @@ window["cr_setSuspended"] = function(s)
 				glw.clearRect(clearleft, y, clearright - clearleft, h);
 				if (inst)
 				{
+					var pixelWidth;
+					var pixelHeight;
+					if (inst.curFrame && inst.curFrame.texture_img)
+					{
+						var img = inst.curFrame.texture_img;
+						pixelWidth = 1.0 / img.width;
+						pixelHeight = 1.0 / img.height;
+					}
+					else
+					{
+						pixelWidth = 1.0 / inst.width;
+						pixelHeight = 1.0 / inst.height;
+					}
 					glw.setProgramParameters(rendertarget,					// backTex
-											 1.0 / inst.width,				// pixelWidth
-											 1.0 / inst.height,				// pixelHeight
+											 pixelWidth,
+											 pixelHeight,
 											 rcTex2.left, rcTex2.top,		// destStart
 											 rcTex2.right, rcTex2.bottom,	// destEnd
 											 layerScale,
@@ -8660,7 +8894,8 @@ window["cr_setSuspended"] = function(s)
 			if (!hasPersistBehavior || this.layout.first_visit)
 			{
 				inst = this.runtime.createInstanceFromInit(initial_inst, this, true);
-;
+				if (!inst)
+					continue;		// may have skipped creation due to fallback effect "destroy"
 				created_instances.push(inst);
 				if (inst.type.global)
 				{
@@ -8960,10 +9195,7 @@ window["cr_setSuspended"] = function(s)
 			}
 			if (ctx_changed)
 			{
-				layer_ctx["webkitImageSmoothingEnabled"] = this.runtime.linearSampling;
-				layer_ctx["mozImageSmoothingEnabled"] = this.runtime.linearSampling;
-				layer_ctx["msImageSmoothingEnabled"] = this.runtime.linearSampling;
-				layer_ctx["imageSmoothingEnabled"] = this.runtime.linearSampling;
+				this.runtime.setCtxImageSmoothingEnabled(layer_ctx, this.runtime.linearSampling);
 			}
 			if (this.transparent)
 				layer_ctx.clearRect(0, 0, this.runtime.draw_width, this.runtime.draw_height);
@@ -9058,6 +9290,19 @@ window["cr_setSuspended"] = function(s)
 		this.viewTop = py;
 		this.viewRight = px + (this.runtime.draw_width * (1 / myscale));
 		this.viewBottom = py + (this.runtime.draw_height * (1 / myscale));
+		var temp;
+		if (this.viewLeft > this.viewRight)
+		{
+			temp = this.viewLeft;
+			this.viewLeft = this.viewRight;
+			this.viewRight = temp;
+		}
+		if (this.viewTop > this.viewBottom)
+		{
+			temp = this.viewTop;
+			this.viewTop = this.viewBottom;
+			this.viewBottom = temp;
+		}
 		var myAngle = this.getAngle();
 		if (myAngle !== 0)
 		{
@@ -9340,9 +9585,22 @@ window["cr_setSuspended"] = function(s)
 				destEndX = screenright / windowWidth;
 				destEndY = 1 - screenbottom / windowHeight;
 			}
+			var pixelWidth;
+			var pixelHeight;
+			if (inst.curFrame && inst.curFrame.texture_img)
+			{
+				var img = inst.curFrame.texture_img;
+				pixelWidth = 1.0 / img.width;
+				pixelHeight = 1.0 / img.height;
+			}
+			else
+			{
+				pixelWidth = 1.0 / inst.width;
+				pixelHeight = 1.0 / inst.height;
+			}
 			glw.setProgramParameters(this.render_offscreen ? this.runtime.layer_tex : this.layout.getRenderTarget(), // backTex
-									 1.0 / inst.width,			// pixelWidth
-									 1.0 / inst.height,			// pixelHeight
+									 pixelWidth,
+									 pixelHeight,
 									 destStartX, destStartY,
 									 destEndX, destEndY,
 									 myscale,
@@ -9932,7 +10190,7 @@ window["cr_setSuspended"] = function(s)
 			this.is_else_block = (this.conditions[0].type == null && this.conditions[0].func == cr.system_object.prototype.cnds.Else);
 		}
 	};
-	window["_c2hh_"] = "";
+	window["_c2hh_"] = "649840C35376CB52756A1598C58AFE1A8C0A3DD0";
 	EventBlock.prototype.postInit = function (hasElse/*, prevBlock_*/)
 	{
 		var i, len;
@@ -10716,7 +10974,7 @@ window["cr_setSuspended"] = function(s)
 				break;
 			case 10:	// instvar
 				this.index = m[1];
-				if (owner.type.is_family)
+				if (owner.type && owner.type.is_family)
 				{
 					this.get = this.get_familyvar;
 					this.variesPerInstance = true;
@@ -12372,6 +12630,10 @@ cr.system_object.prototype.loadFromJSON = function (o)
 	{
 		return true;
 	};
+	SysCnds.prototype.OnSaveFailed = function ()
+	{
+		return true;
+	};
 	SysCnds.prototype.OnLoadComplete = function ()
 	{
 		return true;
@@ -13117,6 +13379,68 @@ cr.system_object.prototype.loadFromJSON = function (o)
 		if (f > 120)
 			f = 120;
 		this.runtime.minimumFramerate = f;
+	};
+	function SortZOrderList(a, b)
+	{
+		var layerA = a[0];
+		var layerB = b[0];
+		var diff = layerA - layerB;
+		if (diff !== 0)
+			return diff;
+		var indexA = a[1];
+		var indexB = b[1];
+		return indexA - indexB;
+	};
+	function SortInstancesByValue(a, b)
+	{
+		return a[1] - b[1];
+	};
+	SysActs.prototype.SortZOrderByInstVar = function (obj, iv)
+	{
+		if (!obj)
+			return;
+		var i, len, inst, value, r, layer, toZ;
+		var sol = obj.getCurrentSol();
+		var pickedInstances = sol.getObjects();
+		var zOrderList = [];
+		var instValues = [];
+		var layout = this.runtime.running_layout;
+		var isFamily = obj.is_family;
+		var familyIndex = obj.family_index;
+		for (i = 0, len = pickedInstances.length; i < len; ++i)
+		{
+			inst = pickedInstances[i];
+			if (!inst.layer)
+				continue;		// not a world instance
+			if (isFamily)
+				value = inst.instance_vars[iv + inst.type.family_var_map[familyIndex]];
+			else
+				value = inst.instance_vars[iv];
+			zOrderList.push([
+				inst.layer.index,
+				inst.get_zindex()
+			]);
+			instValues.push([
+				inst,
+				value
+			]);
+		}
+		if (!zOrderList.length)
+			return;				// no instances were world instances
+		zOrderList.sort(SortZOrderList);
+		instValues.sort(SortInstancesByValue);
+		for (i = 0, len = zOrderList.length; i < len; ++i)
+		{
+			inst = instValues[i][0];					// instance in the order we want
+			layer = layout.layers[zOrderList[i][0]];	// layer to put it on
+			toZ = zOrderList[i][1];						// Z index on that layer to put it
+			if (layer.instances[toZ] !== inst)			// not already got this instance there
+			{
+				layer.instances[toZ] = inst;			// update instance
+				inst.layer = layer;						// update instance's layer reference (could have changed)
+				layer.setZIndicesStaleFrom(toZ);		// mark Z indices stale from this point since they have changed
+			}
+		}
 	};
 	sysProto.acts = new SysActs();
     function SysExps() {};
@@ -14818,6 +15142,715 @@ cr.system_object.prototype.loadFromJSON = function (o)
 cr.shaders = {};
 ;
 ;
+cr.plugins_.Arr = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Arr.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	var arrCache = [];
+	function allocArray()
+	{
+		if (arrCache.length)
+			return arrCache.pop();
+		else
+			return [];
+	};
+	if (!Array.isArray)
+	{
+		Array.isArray = function (vArg) {
+			return Object.prototype.toString.call(vArg) === "[object Array]";
+		};
+	}
+	function freeArray(a)
+	{
+		var i, len;
+		for (i = 0, len = a.length; i < len; i++)
+		{
+			if (Array.isArray(a[i]))
+				freeArray(a[i]);
+		}
+		cr.clearArray(a);
+		arrCache.push(a);
+	};
+	instanceProto.onCreate = function()
+	{
+		this.cx = this.properties[0];
+		this.cy = this.properties[1];
+		this.cz = this.properties[2];
+		if (!this.recycled)
+			this.arr = allocArray();
+		var a = this.arr;
+		a.length = this.cx;
+		var x, y, z;
+		for (x = 0; x < this.cx; x++)
+		{
+			if (!a[x])
+				a[x] = allocArray();
+			a[x].length = this.cy;
+			for (y = 0; y < this.cy; y++)
+			{
+				if (!a[x][y])
+					a[x][y] = allocArray();
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = 0;
+			}
+		}
+		this.forX = [];
+		this.forY = [];
+		this.forZ = [];
+		this.forDepth = -1;
+	};
+	instanceProto.onDestroy = function ()
+	{
+		var x;
+		for (x = 0; x < this.cx; x++)
+			freeArray(this.arr[x]);		// will recurse down and recycle other arrays
+		cr.clearArray(this.arr);
+	};
+	instanceProto.at = function (x, y, z)
+	{
+		x = Math.floor(x);
+		y = Math.floor(y);
+		z = Math.floor(z);
+		if (isNaN(x) || x < 0 || x > this.cx - 1)
+			return 0;
+		if (isNaN(y) || y < 0 || y > this.cy - 1)
+			return 0;
+		if (isNaN(z) || z < 0 || z > this.cz - 1)
+			return 0;
+		return this.arr[x][y][z];
+	};
+	instanceProto.set = function (x, y, z, val)
+	{
+		x = Math.floor(x);
+		y = Math.floor(y);
+		z = Math.floor(z);
+		if (isNaN(x) || x < 0 || x > this.cx - 1)
+			return;
+		if (isNaN(y) || y < 0 || y > this.cy - 1)
+			return;
+		if (isNaN(z) || z < 0 || z > this.cz - 1)
+			return;
+		this.arr[x][y][z] = val;
+	};
+	instanceProto.getAsJSON = function ()
+	{
+		return JSON.stringify({
+			"c2array": true,
+			"size": [this.cx, this.cy, this.cz],
+			"data": this.arr
+		});
+	};
+	instanceProto.saveToJSON = function ()
+	{
+		return {
+			"size": [this.cx, this.cy, this.cz],
+			"data": this.arr
+		};
+	};
+	instanceProto.loadFromJSON = function (o)
+	{
+		var sz = o["size"];
+		this.cx = sz[0];
+		this.cy = sz[1];
+		this.cz = sz[2];
+		this.arr = o["data"];
+	};
+	instanceProto.setSize = function (w, h, d)
+	{
+		if (w < 0) w = 0;
+		if (h < 0) h = 0;
+		if (d < 0) d = 0;
+		if (this.cx === w && this.cy === h && this.cz === d)
+			return;		// no change
+		this.cx = w;
+		this.cy = h;
+		this.cz = d;
+		var x, y, z;
+		var a = this.arr;
+		a.length = w;
+		for (x = 0; x < this.cx; x++)
+		{
+			if (cr.is_undefined(a[x]))
+				a[x] = allocArray();
+			a[x].length = h;
+			for (y = 0; y < this.cy; y++)
+			{
+				if (cr.is_undefined(a[x][y]))
+					a[x][y] = allocArray();
+				a[x][y].length = d;
+				for (z = 0; z < this.cz; z++)
+				{
+					if (cr.is_undefined(a[x][y][z]))
+						a[x][y][z] = 0;
+				}
+			}
+		}
+	};
+	instanceProto.getForX = function ()
+	{
+		if (this.forDepth >= 0 && this.forDepth < this.forX.length)
+			return this.forX[this.forDepth];
+		else
+			return 0;
+	};
+	instanceProto.getForY = function ()
+	{
+		if (this.forDepth >= 0 && this.forDepth < this.forY.length)
+			return this.forY[this.forDepth];
+		else
+			return 0;
+	};
+	instanceProto.getForZ = function ()
+	{
+		if (this.forDepth >= 0 && this.forDepth < this.forZ.length)
+			return this.forZ[this.forDepth];
+		else
+			return 0;
+	};
+	function Cnds() {};
+	Cnds.prototype.CompareX = function (x, cmp, val)
+	{
+		return cr.do_cmp(this.at(x, 0, 0), cmp, val);
+	};
+	Cnds.prototype.CompareXY = function (x, y, cmp, val)
+	{
+		return cr.do_cmp(this.at(x, y, 0), cmp, val);
+	};
+	Cnds.prototype.CompareXYZ = function (x, y, z, cmp, val)
+	{
+		return cr.do_cmp(this.at(x, y, z), cmp, val);
+	};
+	instanceProto.doForEachTrigger = function (current_event)
+	{
+		this.runtime.pushCopySol(current_event.solModifiers);
+		current_event.retrigger();
+		this.runtime.popSol(current_event.solModifiers);
+	};
+	Cnds.prototype.ArrForEach = function (dims)
+	{
+        var current_event = this.runtime.getCurrentEventStack().current_event;
+		this.forDepth++;
+		var forDepth = this.forDepth;
+		if (forDepth === this.forX.length)
+		{
+			this.forX.push(0);
+			this.forY.push(0);
+			this.forZ.push(0);
+		}
+		else
+		{
+			this.forX[forDepth] = 0;
+			this.forY[forDepth] = 0;
+			this.forZ[forDepth] = 0;
+		}
+		switch (dims) {
+		case 0:
+			for (this.forX[forDepth] = 0; this.forX[forDepth] < this.cx; this.forX[forDepth]++)
+			{
+				for (this.forY[forDepth] = 0; this.forY[forDepth] < this.cy; this.forY[forDepth]++)
+				{
+					for (this.forZ[forDepth] = 0; this.forZ[forDepth] < this.cz; this.forZ[forDepth]++)
+					{
+						this.doForEachTrigger(current_event);
+					}
+				}
+			}
+			break;
+		case 1:
+			for (this.forX[forDepth] = 0; this.forX[forDepth] < this.cx; this.forX[forDepth]++)
+			{
+				for (this.forY[forDepth] = 0; this.forY[forDepth] < this.cy; this.forY[forDepth]++)
+				{
+					this.doForEachTrigger(current_event);
+				}
+			}
+			break;
+		case 2:
+			for (this.forX[forDepth] = 0; this.forX[forDepth] < this.cx; this.forX[forDepth]++)
+			{
+				this.doForEachTrigger(current_event);
+			}
+			break;
+		}
+		this.forDepth--;
+		return false;
+	};
+	Cnds.prototype.CompareCurrent = function (cmp, val)
+	{
+		return cr.do_cmp(this.at(this.getForX(), this.getForY(), this.getForZ()), cmp, val);
+	};
+	Cnds.prototype.Contains = function(val)
+	{
+		var x, y, z;
+		for (x = 0; x < this.cx; x++)
+		{
+			for (y = 0; y < this.cy; y++)
+			{
+				for (z = 0; z < this.cz; z++)
+				{
+					if (this.arr[x][y][z] === val)
+						return true;
+				}
+			}
+		}
+		return false;
+	};
+	Cnds.prototype.IsEmpty = function ()
+	{
+		return this.cx === 0 || this.cy === 0 || this.cz === 0;
+	};
+	Cnds.prototype.CompareSize = function (axis, cmp, value)
+	{
+		var s = 0;
+		switch (axis) {
+		case 0:
+			s = this.cx;
+			break;
+		case 1:
+			s = this.cy;
+			break;
+		case 2:
+			s = this.cz;
+			break;
+		}
+		return cr.do_cmp(s, cmp, value);
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.Clear = function ()
+	{
+		var x, y, z;
+		for (x = 0; x < this.cx; x++)
+			for (y = 0; y < this.cy; y++)
+				for (z = 0; z < this.cz; z++)
+					this.arr[x][y][z] = 0;
+	};
+	Acts.prototype.SetSize = function (w, h, d)
+	{
+		this.setSize(w, h, d);
+	};
+	Acts.prototype.SetX = function (x, val)
+	{
+		this.set(x, 0, 0, val);
+	};
+	Acts.prototype.SetXY = function (x, y, val)
+	{
+		this.set(x, y, 0, val);
+	};
+	Acts.prototype.SetXYZ = function (x, y, z, val)
+	{
+		this.set(x, y, z, val);
+	};
+	Acts.prototype.Push = function (where, value, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		switch (axis) {
+		case 0:	// X axis
+			if (where === 0)	// back
+			{
+				x = a.length;
+				a.push(allocArray());
+			}
+			else				// front
+			{
+				x = 0;
+				a.unshift(allocArray());
+			}
+			a[x].length = this.cy;
+			for ( ; y < this.cy; y++)
+			{
+				a[x][y] = allocArray();
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cx++;
+			break;
+		case 1: // Y axis
+			for ( ; x < this.cx; x++)
+			{
+				if (where === 0)	// back
+				{
+					y = a[x].length;
+					a[x].push(allocArray());
+				}
+				else				// front
+				{
+					y = 0;
+					a[x].unshift(allocArray());
+				}
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cy++;
+			break;
+		case 2:	// Z axis
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					if (where === 0)	// back
+					{
+						a[x][y].push(value);
+					}
+					else				// front
+					{
+						a[x][y].unshift(value);
+					}
+				}
+			}
+			this.cz++;
+			break;
+		}
+	};
+	Acts.prototype.Pop = function (where, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		switch (axis) {
+		case 0:	// X axis
+			if (this.cx === 0)
+				break;
+			if (where === 0)	// back
+			{
+				freeArray(a.pop());
+			}
+			else				// front
+			{
+				freeArray(a.shift());
+			}
+			this.cx--;
+			break;
+		case 1: // Y axis
+			if (this.cy === 0)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				if (where === 0)	// back
+				{
+					freeArray(a[x].pop());
+				}
+				else				// front
+				{
+					freeArray(a[x].shift());
+				}
+			}
+			this.cy--;
+			break;
+		case 2:	// Z axis
+			if (this.cz === 0)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					if (where === 0)	// back
+					{
+						a[x][y].pop();
+					}
+					else				// front
+					{
+						a[x][y].shift();
+					}
+				}
+			}
+			this.cz--;
+			break;
+		}
+	};
+	Acts.prototype.Reverse = function (axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		if (this.cx === 0 || this.cy === 0 || this.cz === 0)
+			return;		// no point reversing empty array
+		switch (axis) {
+		case 0:	// X axis
+			a.reverse();
+			break;
+		case 1: // Y axis
+			for ( ; x < this.cx; x++)
+				a[x].reverse();
+			break;
+		case 2:	// Z axis
+			for ( ; x < this.cx; x++)
+				for (y = 0; y < this.cy; y++)
+					a[x][y].reverse();
+			this.cz--;
+			break;
+		}
+	};
+	function compareValues(va, vb)
+	{
+		if (cr.is_number(va) && cr.is_number(vb))
+			return va - vb;
+		else
+		{
+			var sa = "" + va;
+			var sb = "" + vb;
+			if (sa < sb)
+				return -1;
+			else if (sa > sb)
+				return 1;
+			else
+				return 0;
+		}
+	}
+	Acts.prototype.Sort = function (axis)
+	{
+		var x = 0, y = 0, z = 0;
+		var a = this.arr;
+		if (this.cx === 0 || this.cy === 0 || this.cz === 0)
+			return;		// no point sorting empty array
+		switch (axis) {
+		case 0:	// X axis
+			a.sort(function (a, b) {
+				return compareValues(a[0][0], b[0][0]);
+			});
+			break;
+		case 1: // Y axis
+			for ( ; x < this.cx; x++)
+			{
+				a[x].sort(function (a, b) {
+					return compareValues(a[0], b[0]);
+				});
+			}
+			break;
+		case 2:	// Z axis
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					a[x][y].sort(compareValues);
+				}
+			}
+			break;
+		}
+	};
+	Acts.prototype.Delete = function (index, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		index = Math.floor(index);
+		var a = this.arr;
+		if (index < 0)
+			return;
+		switch (axis) {
+		case 0:	// X axis
+			if (index >= this.cx)
+				break;
+			freeArray(a[index]);
+			a.splice(index, 1);
+			this.cx--;
+			break;
+		case 1: // Y axis
+			if (index >= this.cy)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				freeArray(a[x][index]);
+				a[x].splice(index, 1);
+			}
+			this.cy--;
+			break;
+		case 2:	// Z axis
+			if (index >= this.cz)
+				break;
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					a[x][y].splice(index, 1);
+				}
+			}
+			this.cz--;
+			break;
+		}
+	};
+	Acts.prototype.Insert = function (value, index, axis)
+	{
+		var x = 0, y = 0, z = 0;
+		index = Math.floor(index);
+		var a = this.arr;
+		if (index < 0)
+			return;
+		switch (axis) {
+		case 0:	// X axis
+			if (index > this.cx)
+				return;
+			x = index;
+			a.splice(x, 0, allocArray());
+			a[x].length = this.cy;
+			for ( ; y < this.cy; y++)
+			{
+				a[x][y] = allocArray();
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cx++;
+			break;
+		case 1: // Y axis
+			if (index > this.cy)
+				return;
+			for ( ; x < this.cx; x++)
+			{
+				y = index;
+				a[x].splice(y, 0, allocArray());
+				a[x][y].length = this.cz;
+				for (z = 0; z < this.cz; z++)
+					a[x][y][z] = value;
+			}
+			this.cy++;
+			break;
+		case 2:	// Z axis
+			if (index > this.cz)
+				return;
+			for ( ; x < this.cx; x++)
+			{
+				for (y = 0; y < this.cy; y++)
+				{
+					a[x][y].splice(index, 0, value);
+				}
+			}
+			this.cz++;
+			break;
+		}
+	};
+	Acts.prototype.JSONLoad = function (json_)
+	{
+		var o;
+		try {
+			o = JSON.parse(json_);
+		}
+		catch(e) { return; }
+		if (!o["c2array"])		// presumably not a c2array object
+			return;
+		var sz = o["size"];
+		this.cx = sz[0];
+		this.cy = sz[1];
+		this.cz = sz[2];
+		this.arr = o["data"];
+	};
+	Acts.prototype.JSONDownload = function (filename)
+	{
+		var a = document.createElement("a");
+		if (typeof a.download === "undefined")
+		{
+			var str = 'data:text/html,' + encodeURIComponent("<p><a download='" + filename + "' href=\"data:application/json,"
+				+ encodeURIComponent(this.getAsJSON())
+				+ "\">Download link</a></p>");
+			window.open(str);
+		}
+		else
+		{
+			var body = document.getElementsByTagName("body")[0];
+			a.textContent = filename;
+			a.href = "data:application/json," + encodeURIComponent(this.getAsJSON());
+			a.download = filename;
+			body.appendChild(a);
+			var clickEvent = document.createEvent("MouseEvent");
+			clickEvent.initMouseEvent("click", true, true, window, 0, 0, 0, 0, 0, false, false, false, false, 0, null);
+			a.dispatchEvent(clickEvent);
+			body.removeChild(a);
+		}
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.At = function (ret, x, y_, z_)
+	{
+		var y = y_ || 0;
+		var z = z_ || 0;
+		ret.set_any(this.at(x, y, z));
+	};
+	Exps.prototype.Width = function (ret)
+	{
+		ret.set_int(this.cx);
+	};
+	Exps.prototype.Height = function (ret)
+	{
+		ret.set_int(this.cy);
+	};
+	Exps.prototype.Depth = function (ret)
+	{
+		ret.set_int(this.cz);
+	};
+	Exps.prototype.CurX = function (ret)
+	{
+		ret.set_int(this.getForX());
+	};
+	Exps.prototype.CurY = function (ret)
+	{
+		ret.set_int(this.getForY());
+	};
+	Exps.prototype.CurZ = function (ret)
+	{
+		ret.set_int(this.getForZ());
+	};
+	Exps.prototype.CurValue = function (ret)
+	{
+		ret.set_any(this.at(this.getForX(), this.getForY(), this.getForZ()));
+	};
+	Exps.prototype.Front = function (ret)
+	{
+		ret.set_any(this.at(0, 0, 0));
+	};
+	Exps.prototype.Back = function (ret)
+	{
+		ret.set_any(this.at(this.cx - 1, 0, 0));
+	};
+	Exps.prototype.IndexOf = function (ret, v)
+	{
+		for (var i = 0; i < this.cx; i++)
+		{
+			if (this.arr[i][0][0] === v)
+			{
+				ret.set_int(i);
+				return;
+			}
+		}
+		ret.set_int(-1);
+	};
+	Exps.prototype.LastIndexOf = function (ret, v)
+	{
+		for (var i = this.cx - 1; i >= 0; i--)
+		{
+			if (this.arr[i][0][0] === v)
+			{
+				ret.set_int(i);
+				return;
+			}
+		}
+		ret.set_int(-1);
+	};
+	Exps.prototype.AsJSON = function (ret)
+	{
+		ret.set_string(this.getAsJSON());
+	};
+	pluginProto.exps = new Exps();
+}());
+;
+;
 cr.plugins_.Button = function(runtime)
 {
 	this.runtime = runtime;
@@ -15093,6 +16126,108 @@ cr.plugins_.Button = function(runtime)
 	};
 	pluginProto.acts = new Acts();
 	function Exps() {};
+	pluginProto.exps = new Exps();
+}());
+;
+;
+cr.plugins_.Kongregate = function(runtime)
+{
+	this.runtime = runtime;
+};
+(function ()
+{
+	var pluginProto = cr.plugins_.Kongregate.prototype;
+	pluginProto.Type = function(plugin)
+	{
+		this.plugin = plugin;
+		this.runtime = plugin.runtime;
+	};
+	var typeProto = pluginProto.Type.prototype;
+	typeProto.onCreate = function()
+	{
+	};
+	var kongregate = null;
+	var kRuntime = null;
+	var kInst = null;
+	var kUserID = 0;
+	var kUserName = "Guest";
+	function OnKongregateInPageLogin()
+	{
+		kUserID = kongregate["services"]["getUserId"]();
+		kUserName = kongregate["services"]["getUsername"]();
+		kRuntime.trigger(cr.plugins_.Kongregate.prototype.cnds.OnLogin, kInst);
+	};
+	function KongregateLoadComplete()
+	{
+		kongregate = window["kongregateAPI"]["getAPI"]();
+		kongregate["services"]["connect"]();
+		kongregate["services"]["addEventListener"]("login", OnKongregateInPageLogin);
+		kUserID = kongregate["services"]["getUserId"]();
+		kUserName = kongregate["services"]["getUsername"]();
+		if (kUserID > 0)
+			kRuntime.trigger(cr.plugins_.Kongregate.prototype.cnds.OnLogin, kInst);
+	};
+	pluginProto.Instance = function(type)
+	{
+		this.type = type;
+		this.runtime = type.runtime;
+		kRuntime = this.runtime;
+		kInst = this;
+		if (!this.runtime.isDomFree && typeof window["kongregateAPI"] !== "undefined")
+			window["kongregateAPI"]["loadAPI"](KongregateLoadComplete);
+	};
+	var instanceProto = pluginProto.Instance.prototype;
+	instanceProto.onCreate = function()
+	{
+	};
+	instanceProto.onLayoutChange = function ()
+	{
+		if (kUserID > 0)
+			kRuntime.trigger(cr.plugins_.Kongregate.prototype.cnds.OnLogin, kInst);
+	};
+	function Cnds() {};
+	Cnds.prototype.IsGuest = function ()
+	{
+		if (!kongregate)
+			return true;		// preview mode
+		return kongregate["services"]["isGuest"]();
+	};
+	Cnds.prototype.OnLogin = function ()
+	{
+		return true;
+	};
+	pluginProto.cnds = new Cnds();
+	function Acts() {};
+	Acts.prototype.ShowRegBox = function ()
+	{
+		if (kongregate && kUserID === 0)
+			kongregate["services"]["showRegistrationBox"]();
+	};
+	Acts.prototype.SubmitStat = function (name_, value_)
+	{
+		if (kongregate)
+			kongregate["stats"]["submit"](name_, value_);
+	};
+	Acts.prototype.ShowShoutBox = function (msg)
+	{
+		if (kUserID > 0)
+			kongregate["services"]["showShoutBox"](msg);
+	};
+	Acts.prototype.ShowSignInBox = function ()
+	{
+		if (kongregate && kUserID === 0)
+			kongregate["services"]["showSignInBox"]();
+	};
+	pluginProto.acts = new Acts();
+	function Exps() {};
+	Exps.prototype.UserID = function (ret)
+	{
+		ret.set_int(kUserID);
+	};
+	Exps.prototype.UserName = function (ret)
+	{
+		ret.set_string(kUserName);
+	};
 	pluginProto.exps = new Exps();
 }());
 ;
@@ -15647,11 +16782,6 @@ cr.plugins_.Sprite = function(runtime)
 		this.isTicking = false;
 		this.inAnimTrigger = false;
 		this.collisionsEnabled = (this.properties[3] !== 0);
-		if (!(this.type.animations.length === 1 && this.type.animations[0].frames.length === 1) && this.type.animations[0].speed !== 0)
-		{
-			this.runtime.tickMe(this);
-			this.isTicking = true;
-		}
 		this.cur_animation = this.getAnimationByName(this.properties[1]) || this.type.animations[0];
 		this.cur_frame = this.properties[2];
 		if (this.cur_frame < 0)
@@ -15664,6 +16794,11 @@ cr.plugins_.Sprite = function(runtime)
 		this.hotspotY = curanimframe.hotspotY;
 		this.cur_anim_speed = this.cur_animation.speed;
 		this.cur_anim_repeatto = this.cur_animation.repeatto;
+		if (!(this.type.animations.length === 1 && this.type.animations[0].frames.length === 1) && this.cur_anim_speed !== 0)
+		{
+			this.runtime.tickMe(this);
+			this.isTicking = true;
+		}
 		if (this.recycled)
 			this.animTimer.reset();
 		else
@@ -16290,9 +17425,16 @@ cr.plugins_.Sprite = function(runtime)
 			rinstances = candidates2;
 		}
 		else if (orblock)
-			rinstances = rsol.else_instances;
+		{
+			if (this.runtime.isCurrentConditionFirst() && !rsol.else_instances.length && rsol.instances.length)
+				rinstances = rsol.instances;
+			else
+				rinstances = rsol.else_instances;
+		}
 		else
+		{
 			rinstances = rsol.instances;
+		}
 		rpicktype = rtype;
 		needscollisionfinish = (ltype !== rtype && !inverted);
 		if (do_offset)
@@ -16588,7 +17730,7 @@ cr.plugins_.Sprite = function(runtime)
 			this.set_bbox_changed();
 		}
 	};
-	Acts.prototype.LoadURL = function (url_, resize_)
+	Acts.prototype.LoadURL = function (url_, resize_, crossOrigin_)
 	{
 		var img = new Image();
 		var self = this;
@@ -16635,9 +17777,9 @@ cr.plugins_.Sprite = function(runtime)
 			self.runtime.redraw = true;
 			self.runtime.trigger(cr.plugins_.Sprite.prototype.cnds.OnURLLoaded, self);
 		};
-		if (url_.substr(0, 5) !== "data:")
+		if (url_.substr(0, 5) !== "data:" && crossOrigin_ === 0)
 			img["crossOrigin"] = "anonymous";
-		img.src = url_;
+		this.runtime.setImageSrc(img, url_);
 	};
 	Acts.prototype.SetCollisions = function (set_)
 	{
@@ -16878,7 +18020,7 @@ cr.plugins_.Text = function(runtime)
 		var myscale = 1;
 		if (glmode)
 		{
-			myscale = this.layer.getScale();
+			myscale = Math.abs(this.layer.getScale());
 			ctx.save();
 			ctx.scale(myscale, myscale);
 		}
@@ -16942,22 +18084,24 @@ cr.plugins_.Text = function(runtime)
 		var floatscaledheight = layer_scale * this.height;
 		var scaledwidth = Math.ceil(floatscaledwidth);
 		var scaledheight = Math.ceil(floatscaledheight);
+		var absscaledwidth = Math.abs(scaledwidth);
+		var absscaledheight = Math.abs(scaledheight);
 		var halfw = this.runtime.draw_width / 2;
 		var halfh = this.runtime.draw_height / 2;
 		if (!this.myctx)
 		{
 			this.mycanvas = document.createElement("canvas");
-			this.mycanvas.width = scaledwidth;
-			this.mycanvas.height = scaledheight;
-			this.lastwidth = scaledwidth;
-			this.lastheight = scaledheight;
+			this.mycanvas.width = absscaledwidth;
+			this.mycanvas.height = absscaledheight;
+			this.lastwidth = absscaledwidth;
+			this.lastheight = absscaledheight;
 			need_redraw = true;
 			this.myctx = this.mycanvas.getContext("2d");
 		}
-		if (scaledwidth !== this.lastwidth || scaledheight !== this.lastheight)
+		if (absscaledwidth !== this.lastwidth || absscaledheight !== this.lastheight)
 		{
-			this.mycanvas.width = scaledwidth;
-			this.mycanvas.height = scaledheight;
+			this.mycanvas.width = absscaledwidth;
+			this.mycanvas.height = absscaledheight;
 			if (this.mytex)
 			{
 				glw.deleteTexture(this.mytex);
@@ -16967,14 +18111,14 @@ cr.plugins_.Text = function(runtime)
 		}
 		if (need_redraw)
 		{
-			this.myctx.clearRect(0, 0, scaledwidth, scaledheight);
+			this.myctx.clearRect(0, 0, absscaledwidth, absscaledheight);
 			this.draw(this.myctx, true);
 			if (!this.mytex)
-				this.mytex = glw.createEmptyTexture(scaledwidth, scaledheight, this.runtime.linearSampling, this.runtime.isMobile);
+				this.mytex = glw.createEmptyTexture(absscaledwidth, absscaledheight, this.runtime.linearSampling, this.runtime.isMobile);
 			glw.videoToTexture(this.mycanvas, this.mytex, this.runtime.isMobile);
 		}
-		this.lastwidth = scaledwidth;
-		this.lastheight = scaledheight;
+		this.lastwidth = absscaledwidth;
+		this.lastheight = absscaledheight;
 		glw.setTexture(this.mytex);
 		glw.setOpacity(this.opacity);
 		glw.resetModelView();
@@ -17486,7 +18630,7 @@ cr.plugins_.TiledBg = function(runtime)
 		cr.setGLBlend(this, effect, this.runtime.gl);
 		this.runtime.redraw = true;
 	};
-	Acts.prototype.LoadURL = function (url_)
+	Acts.prototype.LoadURL = function (url_, crossOrigin_)
 	{
 		var img = new Image();
 		var self = this;
@@ -17507,9 +18651,9 @@ cr.plugins_.TiledBg = function(runtime)
 			self.runtime.redraw = true;
 			self.runtime.trigger(cr.plugins_.TiledBg.prototype.cnds.OnURLLoaded, self);
 		};
-		if (url_.substr(0, 5) !== "data:")
+		if (url_.substr(0, 5) !== "data:" && crossOrigin_ === 0)
 			img.crossOrigin = "anonymous";
-		img.src = url_;
+		this.runtime.setImageSrc(img, url_);
 	};
 	pluginProto.acts = new Acts();
 	function Exps() {};
@@ -17913,8 +19057,8 @@ cr.plugins_.Tilemap = function(runtime)
 			freeCollRect(this.collision_rects[i]);
 		cr.clearArray(this.quads);
 		cr.clearArray(this.collision_rects);
-		var extentwidth = Math.floor(this.inst.width / tilewidth);
-		var extentheight = Math.floor(this.inst.height / tileheight);
+		var extentwidth = Math.min(this.inst.mapwidth, Math.floor(this.inst.width / tilewidth));
+		var extentheight = Math.min(this.inst.mapheight, Math.floor(this.inst.height / tileheight));
 		extentwidth -= this.left / tilewidth;
 		extentheight -= this.top / tileheight;
 		if (extentwidth > this.inst.cellwidth)
@@ -18833,7 +19977,7 @@ cr.plugins_.Tilemap = function(runtime)
 			body.removeChild(a);
 		}
 	};
-	Acts.prototype.LoadURL = function (url_)
+	Acts.prototype.LoadURL = function (url_, crossOrigin_)
 	{
 		var img = new Image();
 		var self = this;
@@ -18845,9 +19989,9 @@ cr.plugins_.Tilemap = function(runtime)
 			self.runtime.redraw = true;
 			self.runtime.trigger(cr.plugins_.Tilemap.prototype.cnds.OnURLLoaded, self);
 		};
-		if (url_.substr(0, 5) !== "data:")
+		if (url_.substr(0, 5) !== "data:" && crossOrigin_ === 0)
 			img.crossOrigin = "anonymous";
-		img.src = url_;
+		this.runtime.setImageSrc(img, url_);
 	};
 	pluginProto.acts = new Acts();
 	function Exps() {};
@@ -19357,6 +20501,10 @@ cr.behaviors.Bullet = function(runtime)
 	{
 		ret.set_float(this.travelled);
 	};
+	Exps.prototype.Gravity = function (ret)
+	{
+		ret.set_float(this.g);
+	};
 	behaviorProto.exps = new Exps();
 }());
 ;
@@ -19367,7 +20515,21 @@ cr.behaviors.Pathfinding = function(runtime)
 };
 (function ()
 {
+	var cellData = {};
 	var behaviorProto = cr.behaviors.Pathfinding.prototype;
+	behaviorProto.onBeforeLayoutChange = function ()
+	{
+		var p, d;
+		for (p in cellData)
+		{
+			if (cellData.hasOwnProperty(p))
+			{
+				d = cellData[p];
+				d.pathfinder["unsetReady"]();
+				d.regenerate = true;
+			}
+		}
+	};
 	behaviorProto.Type = function(behavior, objtype)
 	{
 		this.behavior = behavior;
@@ -19380,7 +20542,6 @@ cr.behaviors.Pathfinding = function(runtime)
 		this.obstacleTypes = [];		// object types to treat as obstacles in custom mode
 		this.costTypes = [];			// object types with cost: { obj: type, cost: n }
 	};
-	var cellData = {};
 	behaviorProto.Instance = function(type, inst)
 	{
 		this.type = type;
@@ -19730,6 +20891,8 @@ cr.behaviors.Pathfinding = function(runtime)
 		var arr, x, y, lenx, leny, i, len, r, cx1, cy1, cx2, cy2, q;
 		if (!myinfo.pathfinder["isReady"]() || myinfo.regenerate)
 		{
+			this.myHcells = Math.ceil(this.runtime.running_layout.width / this.cellSize);
+			this.myVcells = Math.ceil(this.runtime.running_layout.height / this.cellSize);
 			arr = [];
 			arr.length = this.myHcells;
 			lenx = this.myHcells;
@@ -19879,10 +21042,6 @@ cr.behaviors.Pathfinding = function(runtime)
 		}
 		var self = this;
 		pathfinder["findPath"](cellX, cellY, destCellX, destCellY, this.pathSuccessFn, this.pathFailFn);
-	};
-	behinstProto.onLayoutChange = function ()
-	{
-		this.getMyInfo().regenerate = true;
 	};
 	function Cnds() {};
 	Cnds.prototype.OnPathFound = function ()
@@ -20577,7 +21736,7 @@ cr.behaviors.Turret = function(runtime)
 				inst.set_bbox_changed();
 			}
 			if ((this.fireTimeCount >= this.rateOfFire) &&
-				cr.to_degrees(cr.angleDiff(inst.angle, targetAngle)) <= 0.1 &&
+				(!this.rotateEnabled || cr.to_degrees(cr.angleDiff(inst.angle, targetAngle)) <= 0.1) &&
 				(!this.predictiveAim || this.speedsCount >= 4))
 			{
 				this.fireTimeCount -= this.rateOfFire;
@@ -20585,8 +21744,11 @@ cr.behaviors.Turret = function(runtime)
 					this.fireTimeCount = 0;
 				this.runtime.trigger(cr.behaviors.Turret.prototype.cnds.OnShoot, this.inst);
 			}
-			this.oldTargetX = this.currentTarget.x;
-			this.oldTargetY = this.currentTarget.y;
+			if (this.currentTarget)
+			{
+				this.oldTargetX = this.currentTarget.x;
+				this.oldTargetY = this.currentTarget.y;
+			}
 			this.firstTickWithTarget = false;
 		}
 		if (this.fireTimeCount > this.rateOfFire)
@@ -20706,12 +21868,14 @@ cr.behaviors.Turret = function(runtime)
 }());
 cr.getObjectRefTable = function () { return [
 	cr.plugins_.NinePatch,
+	cr.plugins_.Arr,
 	cr.plugins_.Button,
-	cr.plugins_.progressbar,
+	cr.plugins_.Kongregate,
 	cr.plugins_.Text,
-	cr.plugins_.TiledBg,
-	cr.plugins_.Sprite,
+	cr.plugins_.progressbar,
 	cr.plugins_.Tilemap,
+	cr.plugins_.Sprite,
+	cr.plugins_.TiledBg,
 	cr.behaviors.Pathfinding,
 	cr.behaviors.Turret,
 	cr.behaviors.Bullet,
@@ -20721,52 +21885,68 @@ cr.getObjectRefTable = function () { return [
 	cr.plugins_.Sprite.prototype.acts.Destroy,
 	cr.plugins_.progressbar.prototype.acts.SetMaximum,
 	cr.plugins_.Button.prototype.acts.SetCSSStyle,
+	cr.system_object.prototype.acts.LoadState,
 	cr.system_object.prototype.cnds.Every,
+	cr.system_object.prototype.acts.SaveState,
 	cr.behaviors.Turret.prototype.acts.AddTarget,
-	cr.behaviors.Turret.prototype.cnds.HasTarget,
+	cr.plugins_.Sprite.prototype.cnds.IsOnScreen,
+	cr.plugins_.Sprite.prototype.acts.SetBoolInstanceVar,
+	cr.behaviors.Pathfinding.prototype.cnds.IsMoving,
 	cr.behaviors.Pathfinding.prototype.acts.FindPath,
 	cr.plugins_.Sprite.prototype.exps.X,
+	cr.plugins_.Sprite.prototype.exps.Y,
 	cr.behaviors.Pathfinding.prototype.acts.StartMoving,
-	cr.behaviors.Turret.prototype.cnds.OnTargetAcquired,
-	cr.behaviors.Pathfinding.prototype.acts.SetSpeed,
-	cr.plugins_.Sprite.prototype.cnds.IsOverlapping,
-	cr.plugins_.Sprite.prototype.acts.SetAnim,
+	cr.system_object.prototype.cnds.Else,
+	cr.system_object.prototype.cnds.ForEachOrdered,
+	cr.plugins_.Sprite.prototype.exps.UID,
+	cr.system_object.prototype.exps.floor,
+	cr.plugins_.Sprite.prototype.exps.IID,
+	cr.behaviors.Turret.prototype.cnds.HasTarget,
+	cr.plugins_.Sprite.prototype.cnds.IsBoolInstanceVarSet,
+	cr.plugins_.Tilemap.prototype.acts.SetY,
+	cr.plugins_.Tilemap.prototype.exps.Y,
+	cr.plugins_.Sprite.prototype.acts.AddInstanceVar,
+	cr.plugins_.progressbar.prototype.acts.SetProgress,
+	cr.plugins_.Tilemap.prototype.cnds.CompareY,
+	cr.behaviors.Pathfinding.prototype.acts.Stop,
+	cr.plugins_.Sprite.prototype.cnds.OnCollision,
 	cr.plugins_.Sprite.prototype.acts.SubInstanceVar,
 	cr.plugins_.Sprite.prototype.cnds.CompareInstanceVar,
 	cr.system_object.prototype.acts.AddVar,
-	cr.system_object.prototype.acts.SubVar,
-	cr.plugins_.progressbar.prototype.acts.SetProgress,
-	cr.system_object.prototype.acts.SetVar,
-	cr.system_object.prototype.exps.floor,
-	cr.system_object.prototype.cnds.Else,
-	cr.plugins_.Sprite.prototype.cnds.IsBoolInstanceVarSet,
 	cr.behaviors.Turret.prototype.cnds.OnShoot,
 	cr.plugins_.Sprite.prototype.acts.Spawn,
-	cr.plugins_.Sprite.prototype.cnds.OnCollision,
-	cr.system_object.prototype.cnds.CompareVar,
+	cr.system_object.prototype.cnds.Repeat,
+	cr.system_object.prototype.exps.ceil,
+	cr.plugins_.Sprite.prototype.acts.SetAngle,
+	cr.system_object.prototype.exps.loopindex,
 	cr.system_object.prototype.acts.CreateObject,
 	cr.system_object.prototype.exps.random,
-	cr.plugins_.Sprite.prototype.acts.SetInstanceVar,
-	cr.behaviors.Turret.prototype.acts.SetRateOfFire,
 	cr.behaviors.Turret.prototype.acts.SetRange,
 	cr.behaviors.Pathfinding.prototype.acts.SetMaxSpeed,
-	cr.plugins_.Sprite.prototype.cnds.CompareY,
+	cr.behaviors.Turret.prototype.acts.SetRateOfFire,
+	cr.plugins_.Sprite.prototype.acts.SetInstanceVar,
 	cr.system_object.prototype.cnds.Compare,
+	cr.behaviors.Turret.prototype.exps.RateOfFire,
+	cr.behaviors.Pathfinding.prototype.cnds.OnArrived,
+	cr.plugins_.Sprite.prototype.acts.RotateTowardAngle,
 	cr.system_object.prototype.cnds.EveryTick,
 	cr.plugins_.Text.prototype.acts.SetText,
+	cr.system_object.prototype.exps.round,
 	cr.plugins_.progressbar.prototype.acts.SetTooltip,
 	cr.plugins_.progressbar.prototype.exps.Progress,
-	cr.system_object.prototype.exps.round,
-	cr.behaviors.Pathfinding.prototype.exps.MaxSpeed,
 	cr.behaviors.Turret.prototype.exps.Range,
-	cr.behaviors.Turret.prototype.exps.RateOfFire,
 	cr.plugins_.Button.prototype.acts.SetTooltip,
-	cr.plugins_.Sprite.prototype.cnds.IsOnScreen,
-	cr.plugins_.Sprite.prototype.cnds.CompareX,
-	cr.plugins_.Button.prototype.cnds.OnClicked,
+	cr.system_object.prototype.cnds.ForEach,
+	cr.plugins_.progressbar.prototype.acts.SetPos,
 	cr.plugins_.progressbar.prototype.cnds.CompareProgress,
 	cr.plugins_.progressbar.prototype.exps.Maximum,
-	cr.plugins_.Sprite.prototype.acts.SetBoolInstanceVar,
-	cr.system_object.prototype.acts.Wait,
-	cr.system_object.prototype.cnds.Repeat
+	cr.plugins_.progressbar.prototype.acts.SetVisible,
+	cr.system_object.prototype.cnds.CompareVar,
+	cr.system_object.prototype.acts.SetVar,
+	cr.plugins_.Sprite.prototype.cnds.CompareX,
+	cr.plugins_.Button.prototype.cnds.OnClicked,
+	cr.system_object.prototype.acts.SubVar,
+	cr.plugins_.Sprite.prototype.acts.SetAnim,
+	cr.behaviors.Pathfinding.prototype.exps.MaxSpeed,
+	cr.system_object.prototype.acts.Wait
 ];};
